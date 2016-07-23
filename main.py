@@ -12,6 +12,7 @@ import pokemon_pb2
 import time
 
 from google.protobuf.internal import encoder
+from pushbullet import Pushbullet
 
 from datetime import datetime
 from geopy.geocoders import GoogleV3
@@ -41,13 +42,14 @@ def getNeighbors():
     return walk
 
 with open('config.json') as file:
-	credentials = json.load(file)
+    credentials = json.load(file)
 
 PTC_CLIENT_SECRET = credentials.get('PTC_CLIENT_SECRET', None)
 ANDROID_ID = credentials.get('ANDROID_ID', None)
 SERVICE = credentials.get('SERVICE', None)
 CLIENT_SIG = credentials.get('CLIENT_SIG', None)
 GMAPS_API_KEY = credentials.get('GOOGLE_MAPS_API_KEY', None)
+PUSHBULLET_API_KEY = credentials.get('PUSHBULLET_API_KEY', None)
 
 API_URL = 'https://pgorelease.nianticlabs.com/plfe/rpc'
 LOGIN_URL = 'https://sso.pokemon.com/sso/login?service=https%3A%2F%2Fsso.pokemon.com%2Fsso%2Foauth2.0%2FcallbackAuthorize'
@@ -78,6 +80,12 @@ DATA = {
     'gym':{}
 }
 
+loglist = []
+loglist_counter = 0
+
+if PUSHBULLET_API_KEY:
+    pb = Pushbullet(PUSHBULLET_API_KEY)
+    
 def f2i(float):
   return struct.unpack('<Q', struct.pack('<d', float))[0]
 
@@ -284,7 +292,7 @@ def login_ptc(username, password):
     try:
         jdata = json.loads(r.content)
     except ValueError, e:
-        debug('login_ptc: could not decode JSON from {}'.format(r.content))
+        print 'login_ptc: could not decode JSON from {}'.format(r.content)
         return None
 
     # Maximum password length is 15 (sign in page enforces this limit, API does not)
@@ -426,6 +434,30 @@ def scan(api_endpoint, access_token, response, origin, pokemons):
             difflat = diff.lat().degrees
             difflng = diff.lng().degrees
 
+            blacklist = [10, 11, 13, 14, 15, 16, 17, 19, 20, 21, 22, 41, 42, 46, 47, 48, 49, 72, 96, 98, 116, 118, 119, 129]
+            
+            global loglist
+            global loglist_counter
+
+            loglist_counter = loglist_counter + 1
+
+            if loglist_counter > 100:
+                loglist_counter = 0
+                del loglist[:]
+
+            print loglist_counter;
+
+            if(PUSHBULLET_API_KEY and loglist_counter != 1 and poke.pokemon.PokemonId not in blacklist and [poke.pokemon.PokemonId, poke.Latitude, poke.Longitude] not in loglist):
+                geolocator = GoogleV3()
+                address = geolocator.reverse("%s, %s" % (poke.Latitude, poke.Longitude))
+                push = pb.push_note("Found a (%s) %s for %s seconds" % (poke.pokemon.PokemonId, pokemons[poke.pokemon.PokemonId - 1]['Name'], poke.TimeTillHiddenMs / 1000), "Go catch it <3 location: %s (%s, %s)" % (address[0], poke.Latitude, poke.Longitude))
+
+                #When they fix this bug in the pushbullet lib, use this code.. You'll get a nice map in pushbullet. Way cooler
+                #title = "Found: (%s) %s" % (poke.pokemon.PokemonId, pokemons[poke.pokemon.PokemonId - 1]['Name'])
+                #push = pb.push_address("home", " %s" % address[0])
+
+                loglist.append([poke.pokemon.PokemonId, poke.Latitude, poke.Longitude])
+
             print("[+] (%s) %s is visible at (%s, %s) for %s seconds" % (poke.pokemon.PokemonId, pokemons[poke.pokemon.PokemonId - 1]['Name'], poke.Latitude, poke.Longitude, poke.TimeTillHiddenMs / 1000))
 
             timestamp = int(time.time())
@@ -441,7 +473,6 @@ def scan(api_endpoint, access_token, response, origin, pokemons):
         steps +=1
 
         print('[+] Scan: %0.1f %%' % (((steps + (pos * .25) - .25) / steplimit**2) * 100))
-
 
 def main():
     full_path = os.path.realpath(__file__)
@@ -473,7 +504,7 @@ def main():
     else:
         try:
             with open('access.json') as f:
-            	access = json.load(f)
+                access = json.load(f)
 
             username = access.get('USERNAME', None)
             password = access.get('PASSWORD', None)
@@ -531,7 +562,6 @@ def main():
 
         while is_valid == True:
             scan(api_endpoint, access_token, response, origin, pokemons)
-
 
 if __name__ == '__main__':
     main()
